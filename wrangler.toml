@@ -1,0 +1,7 @@
+# Cloudflare Pages. Build first, then deploy the static output.
+#   npx expo export -p web && cp public/_headers dist/_headers
+#   npx wrangler pages deploy dist --project-name pocket-habit
+# Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+name = "pocket-habit"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-17"
