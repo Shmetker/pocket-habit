@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors, font } from '../theme';
+import { useFallbackFont } from '../typeface';
 
 type Props = {
   label: string;
@@ -8,11 +9,12 @@ type Props = {
 };
 
 export function UndoToast({ label, onUndo }: Props) {
+  const fallbackFont = useFallbackFont();
   return (
     <View accessibilityLiveRegion="polite" style={styles.bar}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, fallbackFont]}>{label}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="Undo" onPress={onUndo} hitSlop={8}>
-        <Text style={styles.undo}>Undo</Text>
+        <Text style={[styles.undo, fallbackFont]}>Undo</Text>
       </Pressable>
     </View>
   );

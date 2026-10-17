@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, font } from '../theme';
+import { useFallbackFont } from '../typeface';
 
 type Props = {
   visible: boolean;
@@ -22,6 +23,7 @@ type Props = {
 
 export function AddHabitSheet({ visible, initialName, onClose, onSave }: Props) {
   const insets = useSafeAreaInsets();
+  const fallbackFont = useFallbackFont();
   const [name, setName] = useState(initialName);
   const [focused, setFocused] = useState(true);
 
@@ -48,7 +50,7 @@ export function AddHabitSheet({ visible, initialName, onClose, onSave }: Props) 
         <View style={[styles.sheet, { paddingBottom: 24 + insets.bottom }]}>
           <View style={styles.handle} />
           <View style={styles.gap16} />
-          <Text style={styles.title}>New habit</Text>
+          <Text style={[styles.title, fallbackFont]}>New habit</Text>
           <View style={styles.gap16} />
           <TextInput
             accessibilityLabel="Habit name"
@@ -66,7 +68,7 @@ export function AddHabitSheet({ visible, initialName, onClose, onSave }: Props) 
                 onSave(trimmed);
               }
             }}
-            style={[styles.input, focused ? styles.inputFocused : styles.inputIdle]}
+            style={[styles.input, focused ? styles.inputFocused : styles.inputIdle, fallbackFont]}
           />
           <View style={styles.gap24} />
           <Pressable
@@ -76,7 +78,7 @@ export function AddHabitSheet({ visible, initialName, onClose, onSave }: Props) 
             onPress={() => onSave(trimmed)}
             style={[styles.save, !trimmed && styles.saveDisabled]}
           >
-            <Text style={styles.saveLabel}>Save</Text>
+            <Text style={[styles.saveLabel, fallbackFont]}>Save</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>

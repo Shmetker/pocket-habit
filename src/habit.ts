@@ -9,6 +9,8 @@ export type HabitView = {
   createdAt: string;
   best: number;
   dates: string[];
+  /** Local date this view was built for. `doneToday` refers to this day only. */
+  asOf: string;
   doneToday: boolean;
   streak: StreakResult;
 };
@@ -26,6 +28,7 @@ export function buildHabitView(
     createdAt: record.createdAt,
     best: record.best,
     dates: sorted,
+    asOf: today,
     doneToday: sorted.includes(today),
     streak: computeStreak(sorted, clock),
   };
@@ -33,14 +36,19 @@ export function buildHabitView(
 
 export function applyTick(view: HabitView, clock: Clock): HabitView {
   const today = localToday(clock);
-  if (view.dates.includes(today)) {
+  // A row built for another civil day must be reloaded, not ticked on the new day.
+  if (view.asOf !== today) {
     return view;
+  }
+  if (view.dates.includes(today)) {
+    return { ...view, asOf: today, doneToday: true };
   }
   const dates = [...view.dates, today].sort();
   const streak = computeStreak(dates, clock);
   return {
     ...view,
     dates,
+    asOf: today,
     best: bestAfterTick(view.best, streak.current),
     doneToday: true,
     streak,
@@ -49,10 +57,14 @@ export function applyTick(view: HabitView, clock: Clock): HabitView {
 
 export function applyUntick(view: HabitView, clock: Clock): HabitView {
   const today = localToday(clock);
+  if (view.asOf !== today) {
+    return view;
+  }
   const dates = view.dates.filter((date) => date !== today);
   return {
     ...view,
     dates,
+    asOf: today,
     best: bestAfterUntick(view.best),
     doneToday: false,
     streak: computeStreak(dates, clock),

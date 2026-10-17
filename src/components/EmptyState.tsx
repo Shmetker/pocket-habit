@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors, font, SUGGESTIONS } from '../theme';
+import { useFallbackFont } from '../typeface';
 import { FlameLargeIcon } from './Icons';
 
 type Props = {
@@ -8,13 +9,14 @@ type Props = {
 };
 
 export function EmptyState({ onSuggest }: Props) {
+  const fallbackFont = useFallbackFont();
   return (
     <View style={styles.block}>
       <FlameLargeIcon />
       <View style={styles.gap16} />
-      <Text style={styles.title}>Start with one small habit</Text>
+      <Text style={[styles.title, fallbackFont]}>Start with one small habit</Text>
       <View style={styles.gap8} />
-      <Text style={styles.subtitle}>Tick it daily to build a streak</Text>
+      <Text style={[styles.subtitle, fallbackFont]}>Tick it daily to build a streak</Text>
       <View style={styles.gap24} />
       <View style={styles.chips}>
         {SUGGESTIONS.map((name) => (
@@ -25,7 +27,7 @@ export function EmptyState({ onSuggest }: Props) {
             onPress={() => onSuggest(name)}
             style={styles.chip}
           >
-            <Text style={styles.chipLabel}>{name}</Text>
+            <Text style={[styles.chipLabel, fallbackFont]}>{name}</Text>
           </Pressable>
         ))}
       </View>

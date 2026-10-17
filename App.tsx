@@ -24,7 +24,16 @@ import { UndoToast } from './src/components/UndoToast';
 import { systemClock, localToday } from './src/clock';
 import { formatTodayHeading } from './src/dates';
 import { playTickHaptic } from './src/feedback';
-import { applyTick, applyUntick, buildHabitView, type HabitView } from './src/habit';
+import { applyTick, applyUntick, type HabitView } from './src/habit';
+import {
+  FALLBACK_FONT_FAMILY,
+  homeIsBlocked,
+  markLocalChange,
+  notebookCanOpen,
+  planTap,
+  publishReload,
+  restoreRemovedDate,
+} from './src/screen';
 import { computeStreak } from './src/streak';
 import {
   addHabit,
@@ -36,6 +45,7 @@ import {
   untick,
 } from './src/storage/sqlite';
 import { colors, font, UNDO_MS } from './src/theme';
+import { FontFallbackContext } from './src/typeface';
 
 type UndoState = {
   habitId: string;
@@ -67,6 +77,8 @@ function PocketHabit() {
     PlusJakartaSans_600SemiBold,
     PlusJakartaSans_700Bold,
   });
+  const fontFailed = fontError != null;
+  const fallbackFont = fontFailed ? { fontFamily: FALLBACK_FONT_FAMILY } : null;
   const [habits, setHabits] = useState<HabitView[] | null>(null);
   const [heading, setHeading] = useState(() =>
     formatTodayHeading(new Date(), systemClock().timeZone),
@@ -77,6 +89,7 @@ function PocketHabit() {
   const [undo, setUndo] = useState<UndoState | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const generation = useRef(0);
 
   const runSerialized = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
     const run = queue.current.then(task, task);
@@ -111,10 +124,12 @@ function PocketHabit() {
 
   const refresh = useCallback(() => {
     const clock = systemClock();
+    const startedAt = generation.current;
     setHeading(formatTodayHeading(clock.now(), clock.timeZone));
     return runSerialized(async () => {
       const views = await loadHabitViews(clock);
-      setHabits(views);
+      const stale = generation.current !== startedAt;
+      setHabits((current) => publishReload(current, views, stale));
       setHeading(formatTodayHeading(clock.now(), clock.timeZone));
       setError(null);
     });
@@ -129,18 +144,19 @@ function PocketHabit() {
   }, []);
 
   useEffect(() => {
-    if (!fontsLoaded) {
+    if (!notebookCanOpen(fontsLoaded, fontFailed)) {
       return;
     }
     let cancelled = false;
-    void (async () => {
+    const clock = systemClock();
+    const startedAt = generation.current;
+    void runSerialized(async () => {
       try {
-        const clock = systemClock();
         const views = await loadHabitViews(clock);
         if (cancelled) {
           return;
         }
-        setHabits(views);
+        setHabits((current) => publishReload(current, views, generation.current !== startedAt));
         setHeading(formatTodayHeading(clock.now(), clock.timeZone));
         setError(null);
       } catch (reason: unknown) {
@@ -148,11 +164,11 @@ function PocketHabit() {
           setError(reason instanceof Error ? reason.message : 'Couldn’t open the habit notebook');
         }
       }
-    })();
+    });
     return () => {
       cancelled = true;
     };
-  }, [fontsLoaded]);
+  }, [fontsLoaded, fontFailed, runSerialized]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -181,9 +197,12 @@ function PocketHabit() {
     const today = localToday(clock);
     setSheetOpen(false);
     setDraft('');
+    generation.current = markLocalChange(generation.current);
+    const startedAt = generation.current;
     void runSerialized(async () => {
       await addHabit({ id: createId(), name, createdAt: today });
-      setHabits(await loadHabitViews(clock));
+      const views = await loadHabitViews(clock);
+      setHabits((current) => publishReload(current, views, generation.current !== startedAt));
       setHeading(formatTodayHeading(clock.now(), clock.timeZone));
       setError(null);
     }).catch((reason: unknown) => {
@@ -191,15 +210,26 @@ function PocketHabit() {
     });
   };
 
-  const onToggle = (habit: HabitView) => {
+  const onToggle = (habit: HabitView, rowDate: string) => {
     const clock = systemClock();
-    const today = localToday(clock);
-    if (habit.doneToday) {
-      setHabits((current) =>
-        current?.map((item) => (item.id === habit.id ? applyUntick(item, clock) : item)) ?? null,
+    const decision = planTap(habit, clock, rowDate);
+    if (decision.type === 'reload') {
+      void refresh().catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : 'Couldn’t refresh today');
+      });
+      return;
+    }
+
+    generation.current = markLocalChange(generation.current);
+    if (decision.type === 'untick') {
+      setHabits(
+        (current) =>
+          current?.map((item) =>
+            item.id === habit.id && item.asOf === decision.date ? applyUntick(item, clock) : item,
+          ) ?? null,
       );
-      showUndo({ habitId: habit.id, date: today, name: habit.name });
-      void runSerialized(() => untick(habit.id, today)).catch((reason: unknown) => {
+      showUndo({ habitId: habit.id, date: decision.date, name: habit.name });
+      void runSerialized(() => untick(habit.id, decision.date)).catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : 'Couldn’t remove today’s tick');
         void refresh();
       });
@@ -208,12 +238,16 @@ function PocketHabit() {
 
     clearUndo();
     playTickHaptic();
-    const next = applyTick(habit, clock);
-    setHabits((current) => current?.map((item) => (item.id === habit.id ? next : item)) ?? null);
+    setHabits(
+      (current) =>
+        current?.map((item) =>
+          item.id === habit.id && item.asOf === decision.date ? applyTick(item, clock) : item,
+        ) ?? null,
+    );
     void runSerialized(async () => {
-      await tick(habit.id, today);
-      if (next.best > habit.best) {
-        await raiseBest(habit.id, next.best);
+      await tick(habit.id, decision.date);
+      if (decision.view.best > habit.best) {
+        await raiseBest(habit.id, decision.view.best);
       }
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : 'Couldn’t save today’s tick');
@@ -229,16 +263,12 @@ function PocketHabit() {
     clearUndo();
     playTickHaptic();
     const clock = systemClock();
-    setHabits((current) =>
-      current?.map((item) => {
-        if (item.id !== snapshot.habitId) {
-          return item;
-        }
-        if (snapshot.date === localToday(clock)) {
-          return applyTick(item, clock);
-        }
-        return buildHabitView(item, [...item.dates, snapshot.date], clock);
-      }) ?? null,
+    generation.current = markLocalChange(generation.current);
+    setHabits(
+      (current) =>
+        current?.map((item) =>
+          item.id === snapshot.habitId ? restoreRemovedDate(item, snapshot.date, clock) : item,
+        ) ?? null,
     );
     void runSerialized(async () => {
       await tick(snapshot.habitId, snapshot.date);
@@ -263,21 +293,27 @@ function PocketHabit() {
         ? 'No habits yet'
         : `${doneCount} of ${habits.length} done`;
 
-  const blocked = !fontsLoaded || (habits === null && !error && !fontError);
+  const blocked = homeIsBlocked({
+    fontsLoaded,
+    fontFailed,
+    habitsReady: habits !== null,
+    failedToLoad: error !== null,
+  });
 
   return (
+    <FontFallbackContext.Provider value={fontFailed}>
     <View style={styles.page}>
       <StatusBar style="dark" />
       <View style={[styles.column, { paddingTop: insets.top + 8 }]}>
         <View style={styles.header}>
-          <Text style={styles.title}>{heading}</Text>
-          <Text style={styles.subtitle}>{fontError ? 'Couldn’t load type' : subtitle}</Text>
+          <Text style={[styles.title, fallbackFont]}>{heading}</Text>
+          <Text style={[styles.subtitle, fallbackFont]}>{subtitle}</Text>
         </View>
 
         {error ? (
           <View style={styles.errorBox}>
-            <Text style={styles.errorTitle}>Pocket Habit can’t open its notebook</Text>
-            <Text style={styles.errorBody}>{error}</Text>
+            <Text style={[styles.errorTitle, fallbackFont]}>Pocket Habit can’t open its notebook</Text>
+            <Text style={[styles.errorBody, fallbackFont]}>{error}</Text>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Try again"
@@ -288,13 +324,13 @@ function PocketHabit() {
               }}
               style={styles.retry}
             >
-              <Text style={styles.retryLabel}>Try again</Text>
+              <Text style={[styles.retryLabel, fallbackFont]}>Try again</Text>
             </Pressable>
           </View>
         ) : null}
 
         {blocked ? (
-          <Text style={styles.loading}>Loading habits…</Text>
+          <Text style={[styles.loading, fallbackFont]}>Loading habits…</Text>
         ) : habits && habits.length === 0 ? (
           <EmptyState onSuggest={openSheet} />
         ) : (
@@ -306,10 +342,11 @@ function PocketHabit() {
               <HabitRow
                 key={habit.id}
                 name={habit.name}
+                asOf={habit.asOf}
                 done={habit.doneToday}
                 streak={habit.streak}
                 best={habit.best}
-                onToggle={() => onToggle(habit)}
+                onToggle={(rowDate) => onToggle(habit, rowDate)}
               />
             ))}
           </ScrollView>
@@ -347,6 +384,7 @@ function PocketHabit() {
         />
       ) : null}
     </View>
+    </FontFallbackContext.Provider>
   );
 }
 

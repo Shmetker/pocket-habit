@@ -1,0 +1,113 @@
+import type { Clock } from './clock';
+import { localToday } from './clock';
+import { isLocalDate } from './dates';
+import { applyTick, applyUntick, buildHabitView, type HabitView } from './habit';
+
+/**
+ * Platform default when Plus Jakarta Sans fails to load.
+ * `sans-serif` is a real family on web and Android; iOS uses the system font
+ * when a family name is not installed.
+ */
+export const FALLBACK_FONT_FAMILY = 'sans-serif';
+
+export type TapDecision =
+  | { type: 'reload' }
+  | { type: 'tick'; date: string; view: HabitView }
+  | { type: 'untick'; date: string; view: HabitView };
+
+/**
+ * A tap is only valid for the civil day the row was built for.
+ * Across midnight or a time-zone change, reload instead of treating the
+ * previous `doneToday` as a check-in on the new local day.
+ */
+export function planTap(view: HabitView, clock: Clock, rowDate: string): TapDecision {
+  const today = localToday(clock);
+  if (rowDate !== today || view.asOf !== today || !isLocalDate(today)) {
+    return { type: 'reload' };
+  }
+  if (view.doneToday) {
+    if (!view.dates.includes(rowDate)) {
+      return { type: 'reload' };
+    }
+    return { type: 'untick', date: rowDate, view: applyUntick(view, clock) };
+  }
+  return { type: 'tick', date: rowDate, view: applyTick(view, clock) };
+}
+
+/** Put back the check-in that was removed, and no other day. */
+export function restoreRemovedDate(view: HabitView, removedDate: string, clock: Clock): HabitView {
+  if (!isLocalDate(removedDate) || view.dates.includes(removedDate)) {
+    return view;
+  }
+  const next = buildHabitView(
+    { id: view.id, name: view.name, createdAt: view.createdAt, best: view.best },
+    [...view.dates, removedDate],
+    clock,
+  );
+  return next.best >= view.best ? next : { ...next, best: view.best };
+}
+
+export function markLocalChange(generation: number): number {
+  return generation + 1;
+}
+
+/**
+ * Apply a reload without letting an older read paint over a newer tap.
+ * Best on screen never decreases.
+ */
+export function publishReload(
+  screen: readonly HabitView[] | null,
+  incoming: readonly HabitView[],
+  stale: boolean,
+): HabitView[] {
+  if (screen == null) {
+    return incoming.slice();
+  }
+  const shownById = new Map(screen.map((item) => [item.id, item]));
+  if (!stale) {
+    return incoming.map((item) => keepBest(item, shownById.get(item.id)));
+  }
+  const merged = incoming.map((item) => {
+    const shown = shownById.get(item.id);
+    if (!shown) {
+      return item;
+    }
+    return shown.best >= item.best ? shown : { ...shown, best: item.best };
+  });
+  for (const item of screen) {
+    if (!incoming.some((row) => row.id === item.id)) {
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+function keepBest(incoming: HabitView, shown: HabitView | undefined): HabitView {
+  if (!shown || incoming.best >= shown.best) {
+    return incoming;
+  }
+  return { ...incoming, best: shown.best };
+}
+
+export function notebookCanOpen(fontsLoaded: boolean, fontFailed: boolean): boolean {
+  return fontsLoaded || fontFailed;
+}
+
+export function homeIsBlocked(input: {
+  fontsLoaded: boolean;
+  fontFailed: boolean;
+  habitsReady: boolean;
+  failedToLoad: boolean;
+}): boolean {
+  if (!notebookCanOpen(input.fontsLoaded, input.fontFailed)) {
+    return true;
+  }
+  if (input.failedToLoad) {
+    return false;
+  }
+  return !input.habitsReady;
+}
+
+export function resolveFontFamily(family: string, fontFailed: boolean): string {
+  return fontFailed ? FALLBACK_FONT_FAMILY : family;
+}
