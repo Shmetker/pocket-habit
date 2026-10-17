@@ -47,39 +47,129 @@ export function restoreRemovedDate(view: HabitView, removedDate: string, clock: 
   return next.best >= view.best ? next : { ...next, best: view.best };
 }
 
-export function markLocalChange(generation: number): number {
-  return generation + 1;
+/** Last-edit counter for one habit. A reload keeps screen rows only for ids edited after it started. */
+export function noteHabitEdit(edits: Map<string, number>, habitId: string, counter: number): number {
+  const next = counter + 1;
+  edits.set(habitId, next);
+  return next;
+}
+
+/** Habit ids whose last-edit counter moved after `started`. */
+export function editsAfter(edits: ReadonlyMap<string, number>, started: number): Set<string> {
+  const ids = new Set<string>();
+  for (const [id, at] of edits) {
+    if (at > started) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
+export type DeferredTap = {
+  habitId: string;
+  name: string;
+  intended: 'tick' | 'untick';
+};
+
+/** The circle the user pressed, replayed only after that row is rebuilt for the new day. */
+export function deferTap(view: HabitView): DeferredTap {
+  return {
+    habitId: view.id,
+    name: view.name,
+    intended: view.doneToday ? 'untick' : 'tick',
+  };
 }
 
 /**
  * Apply a reload without letting an older read paint over a newer tap.
+ * Habits not edited since the reload started take the fresh rows.
  * Best on screen never decreases.
  */
 export function publishReload(
   screen: readonly HabitView[] | null,
   incoming: readonly HabitView[],
-  stale: boolean,
+  editedIds: ReadonlySet<string>,
 ): HabitView[] {
   if (screen == null) {
     return incoming.slice();
   }
   const shownById = new Map(screen.map((item) => [item.id, item]));
-  if (!stale) {
-    return incoming.map((item) => keepBest(item, shownById.get(item.id)));
-  }
   const merged = incoming.map((item) => {
     const shown = shownById.get(item.id);
-    if (!shown) {
-      return item;
+    if (shown && editedIds.has(item.id)) {
+      return item.best > shown.best ? { ...shown, best: item.best } : shown;
     }
-    return shown.best >= item.best ? shown : { ...shown, best: item.best };
+    return keepBest(item, shown);
   });
   for (const item of screen) {
-    if (!incoming.some((row) => row.id === item.id)) {
+    if (!incoming.some((row) => row.id === item.id) && editedIds.has(item.id)) {
       merged.push(item);
     }
   }
   return merged;
+}
+
+export type SettledReload = {
+  rows: HabitView[];
+  deferred: DeferredTap | null;
+  applied: Extract<TapDecision, { type: 'tick' | 'untick' }> | null;
+  refreshAgain: boolean;
+};
+
+/**
+ * Publish `incoming`, keep rows edited during this reload, then replay a
+ * day-change tap once its row is for `clock`'s today. One follow-up refresh
+ * is requested when any published row is still for another civil day.
+ */
+export function settleReload(input: {
+  screen: readonly HabitView[] | null;
+  incoming: readonly HabitView[];
+  editedIds: ReadonlySet<string>;
+  allowFollowUp: boolean;
+  deferred: DeferredTap | null;
+  clock: Clock;
+}): SettledReload {
+  let rows = publishReload(input.screen, input.incoming, input.editedIds);
+  let deferred = input.deferred;
+  let applied: SettledReload['applied'] = null;
+  if (deferred) {
+    const replay = replayDeferredTap(rows, deferred, input.clock);
+    rows = replay.rows;
+    if (replay.consumed) {
+      deferred = null;
+      applied = replay.applied;
+    }
+  }
+  const today = localToday(input.clock);
+  return {
+    rows,
+    deferred,
+    applied,
+    refreshAgain: input.allowFollowUp && rows.some((row) => row.asOf !== today),
+  };
+}
+
+function replayDeferredTap(
+  rows: readonly HabitView[],
+  deferred: DeferredTap,
+  clock: Clock,
+): { rows: HabitView[]; consumed: boolean; applied: SettledReload['applied'] } {
+  const today = localToday(clock);
+  const index = rows.findIndex((row) => row.id === deferred.habitId);
+  if (index < 0 || rows[index]?.asOf !== today) {
+    return { rows: rows.slice(), consumed: false, applied: null };
+  }
+  const row = rows[index];
+  if (!row) {
+    return { rows: rows.slice(), consumed: false, applied: null };
+  }
+  const decision = planTap(row, clock, row.asOf);
+  if (decision.type !== deferred.intended) {
+    return { rows: rows.slice(), consumed: true, applied: null };
+  }
+  const next = rows.slice();
+  next[index] = decision.view;
+  return { rows: next, consumed: true, applied: decision };
 }
 
 function keepBest(incoming: HabitView, shown: HabitView | undefined): HabitView {

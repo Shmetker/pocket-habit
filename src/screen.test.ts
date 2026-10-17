@@ -6,14 +6,17 @@ import test from 'node:test';
 import { fixedClock, localToday, type Clock } from './clock';
 import { applyTick, applyUntick, buildHabitView, type HabitView } from './habit';
 import {
+  deferTap,
+  editsAfter,
   FALLBACK_FONT_FAMILY,
   homeIsBlocked,
-  markLocalChange,
+  noteHabitEdit,
   notebookCanOpen,
   planTap,
   publishReload,
   resolveFontFamily,
   restoreRemovedDate,
+  settleReload,
 } from './screen';
 import { font } from './theme';
 
@@ -99,25 +102,170 @@ test('a same-day tick still updates that row date', () => {
 test('a stale reload keeps the newer tick and does not drop Best', () => {
   const clock = clockAt('2026-10-17T15:00:00Z', 'UTC');
   const before = viewFor(['2026-10-15', '2026-10-16'], 2, clock);
-  let generation = 0;
-  const startedAt = generation;
+  const edits = new Map<string, number>();
+  let counter = noteHabitEdit(edits, 'h', 0);
+  const started = counter;
   const decision = planTap(before, clock, before.asOf);
   assert.equal(decision.type, 'tick');
   if (decision.type !== 'tick') {
     return;
   }
-  generation = markLocalChange(generation);
+  noteHabitEdit(edits, 'h', counter);
+  assert.deepEqual([...editsAfter(edits, started)], ['h']);
   const screen = [decision.view];
   assert.equal(screen[0]?.doneToday, true);
   assert.equal(screen[0]?.best, 3);
 
-  const staleRead = [before];
-  const published = publishReload(screen, staleRead, generation !== startedAt);
+  const published = publishReload(screen, [before], editsAfter(edits, started));
   assert.equal(published[0]?.doneToday, true);
   assert.equal(published[0]?.asOf, '2026-10-17');
   assert.deepEqual(published[0]?.dates, screen[0]?.dates);
   assert.equal(published[0]?.best, 3);
   assert.ok((published[0]?.best ?? 0) >= (screen[0]?.best ?? 0));
+});
+
+test('a reload started on the 17th and finished on the 18th keeps only the habit edited during it', () => {
+  const day17 = clockAt('2026-10-17T21:00:00Z', 'UTC');
+  const day18 = clockAt('2026-10-18T00:30:00Z', 'UTC');
+  const edits = new Map<string, number>();
+  let counter = noteHabitEdit(edits, 'walk', 0);
+  const started = counter;
+  const walk = buildHabitView(
+    { id: 'walk', name: 'Walk', createdAt: '2026-10-15', best: 5 },
+    ['2026-10-15', '2026-10-16', '2026-10-17'],
+    day17,
+  );
+  const read = buildHabitView(
+    { id: 'read', name: 'Read', createdAt: '2026-10-15', best: 2 },
+    ['2026-10-16'],
+    day17,
+  );
+  const readTicked = applyTick(read, day17);
+  noteHabitEdit(edits, 'read', counter);
+  assert.equal(walk.doneToday, true);
+  assert.equal(walk.asOf, '2026-10-17');
+  assert.equal(readTicked.doneToday, true);
+  assert.deepEqual([...editsAfter(edits, started)], ['read']);
+
+  const walkIncoming = buildHabitView(
+    { id: 'walk', name: 'Walk', createdAt: '2026-10-15', best: 3 },
+    ['2026-10-15', '2026-10-16', '2026-10-17'],
+    day18,
+  );
+  const readIncoming = buildHabitView(
+    { id: 'read', name: 'Read', createdAt: '2026-10-15', best: 1 },
+    ['2026-10-16'],
+    day18,
+  );
+  assert.equal(walkIncoming.doneToday, false);
+  assert.equal(walkIncoming.asOf, '2026-10-18');
+
+  const settled = settleReload({
+    screen: [walk, readTicked],
+    incoming: [walkIncoming, readIncoming],
+    editedIds: editsAfter(edits, started),
+    allowFollowUp: true,
+    deferred: null,
+    clock: day18,
+  });
+  const walked = settled.rows.find((row) => row.id === 'walk');
+  const reading = settled.rows.find((row) => row.id === 'read');
+  assert.equal(walked?.asOf, '2026-10-18');
+  assert.equal(walked?.doneToday, false);
+  assert.equal(walked?.best, 5);
+  assert.equal(reading?.asOf, '2026-10-17');
+  assert.equal(reading?.doneToday, true);
+  assert.ok((reading?.best ?? 0) >= readTicked.best);
+  assert.equal(settled.refreshAgain, true);
+
+  const readAfterWrite = buildHabitView(
+    { id: 'read', name: 'Read', createdAt: '2026-10-15', best: readTicked.best },
+    readTicked.dates,
+    day18,
+  );
+  const followUp = settleReload({
+    screen: settled.rows,
+    incoming: [walkIncoming, readAfterWrite],
+    editedIds: new Set(),
+    allowFollowUp: false,
+    deferred: null,
+    clock: day18,
+  });
+  assert.equal(followUp.refreshAgain, false);
+  assert.ok(followUp.rows.every((row) => row.asOf === '2026-10-18'));
+  assert.equal(followUp.rows.find((row) => row.id === 'walk')?.doneToday, false);
+  assert.equal(followUp.rows.find((row) => row.id === 'read')?.doneToday, false);
+  assert.equal(followUp.rows.find((row) => row.id === 'read')?.dates.includes('2026-10-17'), true);
+  assert.ok((followUp.rows.find((row) => row.id === 'walk')?.best ?? 0) >= 5);
+  assert.ok((followUp.rows.find((row) => row.id === 'read')?.best ?? 0) >= readTicked.best);
+});
+
+test('a day-change tap is applied after reload and does not invent a check-in', () => {
+  const yesterday = clockAt('2026-10-17T21:00:00Z', 'UTC');
+  const today = clockAt('2026-10-18T00:30:00Z', 'UTC');
+  const filled = buildHabitView(
+    { id: 'walk', name: 'Walk', createdAt: '2026-10-15', best: 3 },
+    ['2026-10-15', '2026-10-16', '2026-10-17'],
+    yesterday,
+  );
+  const fresh = buildHabitView(
+    { id: 'walk', name: 'Walk', createdAt: '2026-10-15', best: 3 },
+    ['2026-10-15', '2026-10-16', '2026-10-17'],
+    today,
+  );
+  const untick = deferTap(filled);
+  assert.equal(untick.intended, 'untick');
+  const cleared = settleReload({
+    screen: [filled],
+    incoming: [fresh],
+    editedIds: new Set(),
+    allowFollowUp: false,
+    deferred: untick,
+    clock: today,
+  });
+  assert.equal(cleared.applied, null);
+  assert.equal(cleared.deferred, null);
+  assert.equal(cleared.rows[0]?.doneToday, false);
+  assert.equal(cleared.rows[0]?.dates.includes('2026-10-18'), false);
+
+  const empty = buildHabitView(
+    { id: 'read', name: 'Read', createdAt: '2026-10-15', best: 1 },
+    ['2026-10-16'],
+    yesterday,
+  );
+  const freshEmpty = buildHabitView(
+    { id: 'read', name: 'Read', createdAt: '2026-10-15', best: 1 },
+    ['2026-10-16'],
+    today,
+  );
+  const tick = deferTap(empty);
+  assert.equal(tick.intended, 'tick');
+  const waiting = settleReload({
+    screen: [empty],
+    incoming: [empty],
+    editedIds: new Set(),
+    allowFollowUp: true,
+    deferred: tick,
+    clock: today,
+  });
+  assert.equal(waiting.applied, null);
+  assert.equal(waiting.deferred?.habitId, 'read');
+  assert.equal(waiting.refreshAgain, true);
+
+  const applied = settleReload({
+    screen: waiting.rows,
+    incoming: [freshEmpty],
+    editedIds: new Set(),
+    allowFollowUp: false,
+    deferred: waiting.deferred,
+    clock: today,
+  });
+  assert.equal(applied.applied?.type, 'tick');
+  assert.equal(applied.applied?.date, '2026-10-18');
+  assert.equal(applied.deferred, null);
+  assert.equal(applied.rows[0]?.doneToday, true);
+  assert.equal(applied.rows[0]?.asOf, '2026-10-18');
+  assert.equal(applied.refreshAgain, false);
 });
 
 test('a fresh reload can move to the new day without lowering Best', () => {
@@ -129,7 +277,7 @@ test('a fresh reload can move to the new day without lowering Best', () => {
   assert.equal(incoming.doneToday, false);
   assert.equal(incoming.asOf, '2026-10-18');
 
-  const published = publishReload([screen], [incoming], false);
+  const published = publishReload([screen], [incoming], new Set());
   assert.equal(published[0]?.doneToday, false);
   assert.equal(published[0]?.asOf, '2026-10-18');
   assert.equal(published[0]?.best, 5);
@@ -145,7 +293,7 @@ test('a stale reload still adds a habit the screen has not shown yet', () => {
     [],
     clock,
   );
-  const published = publishReload([shown], [shown, added], true);
+  const published = publishReload([shown], [shown, added], new Set());
   assert.deepEqual(
     published.map((item) => item.id),
     ['h', 'new'],
@@ -194,11 +342,14 @@ test('the screen wires taps, reloads, undo, and the font gate through the shared
   const app = readFileSync(join(__dirname, '..', 'App.tsx'), 'utf8');
   const row = readFileSync(join(__dirname, '..', 'src/components/HabitRow.tsx'), 'utf8');
   assert.match(app, /planTap\(/);
-  assert.match(app, /publishReload\(/);
+  assert.match(app, /settleReload\(/);
+  assert.match(app, /editsAfter\(/);
+  assert.match(app, /noteHabitEdit\(/);
   assert.match(app, /restoreRemovedDate\(/);
   assert.match(app, /notebookCanOpen\(/);
   assert.match(app, /homeIsBlocked\(/);
-  assert.match(app, /markLocalChange\(/);
+  assert.match(app, /deferTap\(/);
+  assert.doesNotMatch(app, /generation = useRef/);
   assert.match(app, /asOf=\{habit\.asOf\}/);
   assert.doesNotMatch(app, /if \(!fontsLoaded\)/);
   assert.match(row, /onToggle\(asOf\)/);

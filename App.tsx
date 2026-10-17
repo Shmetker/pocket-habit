@@ -26,13 +26,18 @@ import { formatTodayHeading } from './src/dates';
 import { playTickHaptic } from './src/feedback';
 import { applyTick, applyUntick, type HabitView } from './src/habit';
 import {
+  deferTap,
+  editsAfter,
   FALLBACK_FONT_FAMILY,
   homeIsBlocked,
-  markLocalChange,
+  noteHabitEdit,
   notebookCanOpen,
   planTap,
-  publishReload,
   restoreRemovedDate,
+  settleReload,
+  type DeferredTap,
+  type SettledReload,
+  type TapDecision,
 } from './src/screen';
 import { computeStreak } from './src/streak';
 import {
@@ -89,7 +94,11 @@ function PocketHabit() {
   const [undo, setUndo] = useState<UndoState | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const generation = useRef(0);
+  const editEpoch = useRef(0);
+  const edits = useRef(new Map<string, number>());
+  const habitsRef = useRef<HabitView[] | null>(null);
+  const pendingTap = useRef<DeferredTap | null>(null);
+  const refreshRef = useRef<(allowFollowUp?: boolean) => Promise<void>>(async () => {});
 
   const runSerialized = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
     const run = queue.current.then(task, task);
@@ -122,18 +131,80 @@ function PocketHabit() {
     [],
   );
 
-  const refresh = useCallback(() => {
+  const markEdit = useCallback((habitId: string) => {
+    editEpoch.current = noteHabitEdit(edits.current, habitId, editEpoch.current);
+  }, []);
+
+  const paint = (update: (current: HabitView[] | null) => HabitView[] | null) => {
+    const next = update(habitsRef.current);
+    habitsRef.current = next;
+    setHabits(next);
+  };
+
+  const persistTap = (decision: Extract<TapDecision, { type: 'tick' | 'untick' }>) => {
+    if (decision.type === 'untick') {
+      return untick(decision.view.id, decision.date);
+    }
+    return tick(decision.view.id, decision.date).then(async () => {
+      await raiseBest(decision.view.id, decision.view.best);
+    });
+  };
+
+  const applySettled = useCallback((outcome: SettledReload) => {
+    pendingTap.current = outcome.deferred;
+    if (outcome.applied) {
+      markEdit(outcome.applied.view.id);
+      if (outcome.applied.type === 'untick') {
+        showUndo({
+          habitId: outcome.applied.view.id,
+          date: outcome.applied.date,
+          name: outcome.applied.view.name,
+        });
+      } else {
+        clearUndo();
+        playTickHaptic();
+      }
+    }
+    habitsRef.current = outcome.rows;
+    setHabits(outcome.rows);
+    const now = systemClock();
+    setHeading(formatTodayHeading(now.now(), now.timeZone));
+    setError(null);
+    if (outcome.applied) {
+      const decision = outcome.applied;
+      void runSerialized(() => persistTap(decision)).catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : 'Couldn’t save that tick');
+        void refreshRef.current(true);
+      });
+    }
+    if (outcome.refreshAgain) {
+      void refreshRef.current(false).catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : 'Couldn’t refresh today');
+      });
+    }
+  }, [clearUndo, markEdit, runSerialized, showUndo]);
+
+  const refresh = useCallback((allowFollowUp = true) => {
+    const started = editEpoch.current;
     const clock = systemClock();
-    const startedAt = generation.current;
     setHeading(formatTodayHeading(clock.now(), clock.timeZone));
     return runSerialized(async () => {
       const views = await loadHabitViews(clock);
-      const stale = generation.current !== startedAt;
-      setHabits((current) => publishReload(current, views, stale));
-      setHeading(formatTodayHeading(clock.now(), clock.timeZone));
-      setError(null);
+      const outcome = settleReload({
+        screen: habitsRef.current,
+        incoming: views,
+        editedIds: editsAfter(edits.current, started),
+        allowFollowUp,
+        deferred: pendingTap.current,
+        clock: systemClock(),
+      });
+      applySettled(outcome);
     });
-  }, [runSerialized]);
+  }, [applySettled, runSerialized]);
+
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -149,16 +220,22 @@ function PocketHabit() {
     }
     let cancelled = false;
     const clock = systemClock();
-    const startedAt = generation.current;
+    const started = editEpoch.current;
     void runSerialized(async () => {
       try {
         const views = await loadHabitViews(clock);
         if (cancelled) {
           return;
         }
-        setHabits((current) => publishReload(current, views, generation.current !== startedAt));
-        setHeading(formatTodayHeading(clock.now(), clock.timeZone));
-        setError(null);
+        const outcome = settleReload({
+          screen: habitsRef.current,
+          incoming: views,
+          editedIds: editsAfter(edits.current, started),
+          allowFollowUp: true,
+          deferred: pendingTap.current,
+          clock: systemClock(),
+        });
+        applySettled(outcome);
       } catch (reason: unknown) {
         if (!cancelled) {
           setError(reason instanceof Error ? reason.message : 'Couldn’t open the habit notebook');
@@ -168,7 +245,7 @@ function PocketHabit() {
     return () => {
       cancelled = true;
     };
-  }, [fontsLoaded, fontFailed, runSerialized]);
+  }, [applySettled, fontsLoaded, fontFailed, runSerialized]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -197,14 +274,21 @@ function PocketHabit() {
     const today = localToday(clock);
     setSheetOpen(false);
     setDraft('');
-    generation.current = markLocalChange(generation.current);
-    const startedAt = generation.current;
+    const id = createId();
+    markEdit(id);
+    const started = editEpoch.current;
     void runSerialized(async () => {
-      await addHabit({ id: createId(), name, createdAt: today });
+      await addHabit({ id, name, createdAt: today });
       const views = await loadHabitViews(clock);
-      setHabits((current) => publishReload(current, views, generation.current !== startedAt));
-      setHeading(formatTodayHeading(clock.now(), clock.timeZone));
-      setError(null);
+      const outcome = settleReload({
+        screen: habitsRef.current,
+        incoming: views,
+        editedIds: editsAfter(edits.current, started),
+        allowFollowUp: true,
+        deferred: pendingTap.current,
+        clock: systemClock(),
+      });
+      applySettled(outcome);
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : 'Couldn’t save that habit');
     });
@@ -214,15 +298,17 @@ function PocketHabit() {
     const clock = systemClock();
     const decision = planTap(habit, clock, rowDate);
     if (decision.type === 'reload') {
+      pendingTap.current = deferTap(habit);
       void refresh().catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : 'Couldn’t refresh today');
       });
       return;
     }
 
-    generation.current = markLocalChange(generation.current);
+    pendingTap.current = null;
+    markEdit(habit.id);
     if (decision.type === 'untick') {
-      setHabits(
+      paint(
         (current) =>
           current?.map((item) =>
             item.id === habit.id && item.asOf === decision.date ? applyUntick(item, clock) : item,
@@ -238,18 +324,13 @@ function PocketHabit() {
 
     clearUndo();
     playTickHaptic();
-    setHabits(
+    paint(
       (current) =>
         current?.map((item) =>
           item.id === habit.id && item.asOf === decision.date ? applyTick(item, clock) : item,
         ) ?? null,
     );
-    void runSerialized(async () => {
-      await tick(habit.id, decision.date);
-      if (decision.view.best > habit.best) {
-        await raiseBest(habit.id, decision.view.best);
-      }
-    }).catch((reason: unknown) => {
+    void runSerialized(() => persistTap(decision)).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : 'Couldn’t save today’s tick');
       void refresh();
     });
@@ -263,8 +344,9 @@ function PocketHabit() {
     clearUndo();
     playTickHaptic();
     const clock = systemClock();
-    generation.current = markLocalChange(generation.current);
-    setHabits(
+    pendingTap.current = null;
+    markEdit(snapshot.habitId);
+    paint(
       (current) =>
         current?.map((item) =>
           item.id === snapshot.habitId ? restoreRemovedDate(item, snapshot.date, clock) : item,
