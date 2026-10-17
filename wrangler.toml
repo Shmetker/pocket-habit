@@ -1,6 +1,9 @@
 # Cloudflare Pages. Build first, then deploy the static output.
-#   npx expo export -p web && cp public/_headers dist/_headers
+#   npm run build:web
 #   npx wrangler pages deploy dist --project-name pocket-habit
+# build:web exports the site, copies public/_headers to dist/_headers, and
+# renames dist/assets/node_modules to dist/assets/vendor. Pages skips every
+# directory named node_modules, which otherwise drops wa-sqlite.wasm.
 # Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
 name = "pocket-habit"
 pages_build_output_dir = "dist"

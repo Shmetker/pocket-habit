@@ -30,10 +30,12 @@ npm test
 Build command (output directory is `dist/`):
 
 ```bash
-npx expo export -p web && cp public/_headers dist/_headers
+npm run build:web
 ```
 
-`npm run export:web` is that same command. `npx expo export -p web` writes the static site to `dist/`. The `cp` puts `public/_headers` at `dist/_headers`, which Cloudflare Pages reads from the output root. `npm run serve:web` serves `dist/` on [http://127.0.0.1:43124](http://127.0.0.1:43124) with those headers so you can confirm SQLite before publishing.
+`npm run build:web` runs `npx expo export -p web`, copies `public/_headers` to `dist/_headers`, then runs `scripts/fix-web-assets.mjs`. `npm run export:web` is that same command. The export writes the static site to `dist/`. Cloudflare Pages reads `dist/_headers` from the output root. `npm run serve:web` serves `dist/` on [http://127.0.0.1:43124](http://127.0.0.1:43124) with those headers so you can confirm SQLite before publishing.
+
+Expo places fonts and `wa-sqlite.wasm` under `dist/assets/node_modules/`. `wrangler pages deploy` skips every directory named `node_modules`, so the wasm file never uploads. Pages then serves `index.html` for that URL and the browser reports `wasm validation error: failed to match magic number`. The post-export script renames `dist/assets/node_modules` to `dist/assets/vendor` and rewrites `assets/node_modules/` to `assets/vendor/` in the exported files. It exits with an error if any `node_modules` directory remains under `dist/`.
 
 `public/_headers` sets:
 
@@ -50,7 +52,7 @@ Cross-Origin-Embedder-Policy: require-corp
 npx wrangler pages deploy dist --project-name pocket-habit
 ```
 
-Pages build settings, if the GitHub repo is connected instead of a direct upload: build command `npx expo export -p web && cp public/_headers dist/_headers`, output directory `dist`, Node.js 22.
+Pages build settings, if the GitHub repo is connected instead of a direct upload: build command `npm run build:web`, output directory `dist`, Node.js 22.
 
 There are no `EXPO_PUBLIC_` variables. Do not put secrets in `EXPO_PUBLIC_*`: Expo inlines those into the client bundle. `.gitignore` ignores `.env*`.
 
