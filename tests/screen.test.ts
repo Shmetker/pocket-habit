@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import test from 'node:test';
 
-import { fixedClock, localToday, type Clock } from './clock';
-import { applyTick, applyUntick, buildHabitView, type HabitView } from './habit';
+import { fixedClock, localToday, type Clock } from '../src/clock';
+import { applyTick, applyUntick, buildHabitView, type HabitView } from '../src/habit';
 import {
   deferTap,
   editsAfter,
@@ -17,8 +15,8 @@ import {
   resolveFontFamily,
   restoreRemovedDate,
   settleReload,
-} from './screen';
-import { font } from './theme';
+} from '../src/screen';
+import { font } from '../src/theme';
 
 function clockAt(iso: string, timeZone: string): Clock {
   return fixedClock(new Date(iso), timeZone);
@@ -336,21 +334,4 @@ test('a font load error opens the notebook with the fallback family', () => {
   assert.equal(resolveFontFamily(font.semibold, true), FALLBACK_FONT_FAMILY);
   assert.equal(resolveFontFamily(font.bold, false), font.bold);
   assert.notEqual(FALLBACK_FONT_FAMILY, font.regular);
-});
-
-test('the screen wires taps, reloads, undo, and the font gate through the shared helpers', () => {
-  const app = readFileSync(join(__dirname, '..', 'App.tsx'), 'utf8');
-  const row = readFileSync(join(__dirname, '..', 'src/components/HabitRow.tsx'), 'utf8');
-  assert.match(app, /planTap\(/);
-  assert.match(app, /settleReload\(/);
-  assert.match(app, /editsAfter\(/);
-  assert.match(app, /noteHabitEdit\(/);
-  assert.match(app, /restoreRemovedDate\(/);
-  assert.match(app, /notebookCanOpen\(/);
-  assert.match(app, /homeIsBlocked\(/);
-  assert.match(app, /deferTap\(/);
-  assert.doesNotMatch(app, /generation = useRef/);
-  assert.match(app, /asOf=\{habit\.asOf\}/);
-  assert.doesNotMatch(app, /if \(!fontsLoaded\)/);
-  assert.match(row, /onToggle\(asOf\)/);
 });

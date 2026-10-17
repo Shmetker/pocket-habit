@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { bestAfterTick, bestAfterUntick, bestAtAppOpen, historicalBest } from './best';
-import { fixedClock, localToday, type Clock } from './clock';
-import { describeStreak } from './copy';
-import { addCalendarDays, calendarDaysBetween, formatLocalDate, isLocalDate } from './dates';
-import { applyTick, applyUntick, buildHabitView } from './habit';
-import { computeStreak } from './streak';
-import { SCHEMA, SQL } from './storage/schema';
-import { colors } from './theme';
+import { bestAfterTick, bestAfterUntick, bestAtAppOpen, historicalBest } from '../src/best';
+import { fixedClock, localToday, type Clock } from '../src/clock';
+import { describeStreak } from '../src/copy';
+import { addCalendarDays, calendarDaysBetween, formatLocalDate, isLocalDate } from '../src/dates';
+import { applyTick, applyUntick, buildHabitView } from '../src/habit';
+import { computeStreak } from '../src/streak';
+import { SCHEMA, SQL } from '../src/storage/schema';
+import { colors } from '../src/theme';
 
 const root = join(__dirname, '..');
 

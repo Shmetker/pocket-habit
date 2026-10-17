@@ -27,8 +27,13 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# OS junk
 .DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# certificates
 *.pem
 
 # local env files — never commit secrets, including EXPO_PUBLIC_ values

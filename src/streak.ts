@@ -64,7 +64,7 @@ export function computeStreak(dates: readonly string[], clock: Clock): StreakRes
   return computeStreakEndingOn(dates, localToday(clock));
 }
 
-export function computeStreakEndingOn(dates: readonly string[], today: string): StreakResult {
+function computeStreakEndingOn(dates: readonly string[], today: string): StreakResult {
   const unique = datesOnOrBefore(dates, today);
   if (unique.length === 0) {
     return emptyResult(false);

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { bestAfterUntick } from './best';
-import { fixedClock } from './clock';
-import { computeStreak } from './streak';
-import { SCHEMA, SQL } from './storage/schema';
+import { bestAfterUntick } from '../src/best';
+import { fixedClock } from '../src/clock';
+import { computeStreak } from '../src/streak';
+import { SCHEMA, SQL } from '../src/storage/schema';
 
 function openDatabase(): DatabaseSync {
   const database = new DatabaseSync(':memory:');

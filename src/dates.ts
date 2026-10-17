@@ -43,7 +43,7 @@ export function parseLocalDate(value: string): { year: number; month: number; da
   };
 }
 
-export function formatUtcCalendarDate(utc: Date): string {
+function formatUtcCalendarDate(utc: Date): string {
   const year = utc.getUTCFullYear();
   const month = String(utc.getUTCMonth() + 1).padStart(2, '0');
   const day = String(utc.getUTCDate()).padStart(2, '0');

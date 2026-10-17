@@ -1,4 +1,4 @@
-This is Pocket Habit, a one-screen Expo / React Native app. The screen lives in `App.tsx`. Streak math is pure and tested in `src/`. Do not add accounts, reminders, stats, or themes.
+This is Pocket Habit, a one-screen Expo / React Native app. The screen lives in `App.tsx`. Streak math is pure and lives in `src/`. Tests live in `tests/`. Do not add accounts, reminders, stats, or themes.
 
 Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 

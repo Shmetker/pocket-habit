@@ -15,7 +15,7 @@ export type HabitRecord = {
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
-export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
+function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {
     databasePromise = SQLite.openDatabaseAsync('pocket-habit.db').then(async (database) => {
       await database.execAsync('PRAGMA foreign_keys = ON;');

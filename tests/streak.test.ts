@@ -3,12 +3,12 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { bestAfterTick, bestAfterUntick, bestAtAppOpen, historicalBest } from './best';
-import { fixedClock } from './clock';
-import { describeStreak } from './copy';
-import { addCalendarDays, formatLocalDate } from './dates';
-import { applyTick, applyUntick, buildHabitView } from './habit';
-import { computeStreak } from './streak';
+import { bestAfterTick, bestAfterUntick, bestAtAppOpen, historicalBest } from '../src/best';
+import { fixedClock } from '../src/clock';
+import { describeStreak } from '../src/copy';
+import { addCalendarDays, formatLocalDate } from '../src/dates';
+import { applyTick, applyUntick, buildHabitView } from '../src/habit';
+import { computeStreak } from '../src/streak';
 
 const UTC = 'UTC';
 
@@ -206,7 +206,7 @@ test('historical best matches the pure streak on every check-in day', () => {
 });
 
 test('tick animation stays under 300ms', () => {
-  const source = readFileSync(join(__dirname, 'feedback.ts'), 'utf8');
+  const source = readFileSync(join(__dirname, '../src/feedback.ts'), 'utf8');
   const match = /export const TICK_ANIMATION_MS = (\d+)/.exec(source);
   assert.ok(match);
   const duration = Number(match?.[1]);
